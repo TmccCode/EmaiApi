@@ -1,0 +1,11 @@
+name = "emailgo"
+main = "src/index.js"
+compatibility_date = "2025-10-31"
+
+[triggers]
+email = ["*@uscn.baby"]     # 你的接收域名
+
+[[d1_databases]]
+binding = "EmailSql"        # 代码里使用 env.EmailSql
+database_name = "your-d1-name"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
