@@ -101,20 +101,21 @@ export default {
       // ---------------------------
       // 验证密钥
       // ---------------------------
-      if (path === "/verify" && method === "POST") {
-        const { key } = await request.json();
-        if (!key)
-          return json({ ok: false, msg: "缺少密钥" }, baseHeaders);
+      if (path === '/verify' && method === 'POST') {
+				const { key } = await request.json();
+				if (!key) return json({ ok: false, msg: '缺少密钥' }, baseHeaders);
 
-        const res = await env.EmailSql
-          .prepare("SELECT email, domain, local_part, status FROM mailboxes WHERE secret_key=? LIMIT 1")
-          .bind(key)
-          .first();
-        if (!res) return json({ ok: false, msg: "密钥无效" }, baseHeaders);
-        if (res.status !== "active") return json({ ok: false, msg: "密钥已失效" }, baseHeaders);
+				// ✅ 改这里
+				const res = await env.EmailSql.prepare('SELECT domain, local_part, status FROM mailboxes WHERE secret=? LIMIT 1').bind(key).first();
 
-        return json({ ok: true, msg: "验证成功", email: res.email }, baseHeaders);
-      }
+				if (!res) return json({ ok: false, msg: '密钥无效' }, baseHeaders);
+				if (res.status !== 'active') return json({ ok: false, msg: '密钥已失效' }, baseHeaders);
+
+				// ✅ 拼接邮箱地址
+				const email = `${res.local_part}@${res.domain}`;
+				return json({ ok: true, msg: '验证成功', email }, baseHeaders);
+			}
+
 
       // ---------------------------
       // 查询收件箱（分页）
