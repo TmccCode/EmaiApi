@@ -1,4 +1,4 @@
-name = "emailgo"
+name = "eamilapi"
 main = "src/index.js"
 compatibility_date = "2025-10-31"
 
