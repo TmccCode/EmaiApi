@@ -85,50 +85,50 @@ export default {
   },
 
   //
-  // ====================== HTTP 接口区 ======================
+  // ====================== HTTP 接口 ======================
   //
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
-    const method = request.method;
+    const method = request.method.toUpperCase();
     const baseHeaders = {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
     };
 
-    // CORS 预检
+    // ✅ 允许 CORS 预检
     if (method === "OPTIONS") {
       return new Response("OK", {
         headers: {
           ...baseHeaders,
           "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-          "Access-Control-Allow-Headers": "Content-Type",
+          "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Secret",
         },
       });
     }
 
+    // 工具：从 URL 或 Header 中提取密钥
+    const getKey = () => {
+      const qk = url.searchParams.get("key");
+      if (qk) return qk;
+      const auth = request.headers.get("authorization") || "";
+      if (auth.toLowerCase().startsWith("bearer ")) return auth.slice(7);
+      const xs = request.headers.get("x-secret");
+      if (xs) return xs;
+      return null;
+    };
+
     try {
-      // ---------- 1. 验证密钥 ----------
-      if (path === "/verify" && method === "POST") {
-        const { key } = await request.json();
+      // ---------- 1. 查询收件箱（GET） ----------
+      if (path === "/inbox" && method === "GET") {
+        const key = getKey();
         if (!key) return json({ ok: false, msg: "缺少密钥" }, baseHeaders);
 
-        const res = await env.EmailSql
-          .prepare("SELECT domain, local_part, status FROM mailboxes WHERE secret=? LIMIT 1")
-          .bind(key)
-          .first();
-        if (!res) return json({ ok: false, msg: "密钥无效" }, baseHeaders);
-        if (res.status !== "active") return json({ ok: false, msg: "密钥已失效" }, baseHeaders);
+        const page = Math.max(parseInt(url.searchParams.get("page") || "1", 10), 1);
+        const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") || "10", 10), 1), 50);
+        const status = (url.searchParams.get("status") || "o1").toLowerCase();
 
-        const email = `${res.local_part}@${res.domain}`;
-        return json({ ok: true, msg: "验证成功", email }, baseHeaders);
-      }
-
-      // ---------- 2. 查询收件箱（分页） ----------
-      if (path === "/inbox" && method === "POST") {
-        const { key, page = 1, limit = 10 } = await request.json();
-        if (!key) return json({ ok: false, msg: "缺少密钥" }, baseHeaders);
-
+        // 查 mailbox
         const box = await env.EmailSql
           .prepare("SELECT domain, local_part FROM mailboxes WHERE secret=? LIMIT 1")
           .bind(key)
@@ -136,17 +136,38 @@ export default {
         if (!box) return json({ ok: false, msg: "密钥无效" }, baseHeaders);
 
         const offset = (page - 1) * limit;
+
         const mails = await env.EmailSql
           .prepare(
-            "SELECT id, from_email, subject, body_text, created_at FROM email_inbox WHERE domain=? AND local_part=? AND status='o1' ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            `SELECT id, from_email, subject, body_text, created_at
+             FROM email_inbox
+             WHERE domain=? AND local_part=? AND status=?
+             ORDER BY created_at DESC LIMIT ? OFFSET ?`
           )
-          .bind(box.domain, box.local_part, limit, offset)
+          .bind(box.domain, box.local_part, status, limit, offset)
           .all();
 
-        return json({ ok: true, list: mails.results }, baseHeaders);
+        const totalRow = await env.EmailSql
+          .prepare(
+            `SELECT COUNT(*) AS total FROM email_inbox
+             WHERE domain=? AND local_part=? AND status=?`
+          )
+          .bind(box.domain, box.local_part, status)
+          .first();
+
+        const email = `${box.local_part}@${box.domain}`;
+        return json({
+          ok: true,
+          msg: "查询成功",
+          email,
+          page,
+          limit,
+          total: totalRow?.total || 0,
+          list: mails.results || [],
+        }, baseHeaders);
       }
 
-      // ---------- 3. 删除邮件（改状态） ----------
+      // ---------- 2. 删除邮件 ----------
       if (path === "/delete" && method === "POST") {
         const { key, id } = await request.json();
         if (!key || !id) return json({ ok: false, msg: "缺少参数" }, baseHeaders);
@@ -162,10 +183,10 @@ export default {
           .bind(id, box.domain, box.local_part)
           .run();
 
-        return json({ ok: true, msg: "邮件已隐藏" }, baseHeaders);
+        return json({ ok: true, msg: "邮件已删除" }, baseHeaders);
       }
 
-      // ---------- 4. 创建新密钥 ----------
+      // ---------- 3. 创建密钥 ----------
       if (path === "/create" && method === "POST") {
         const { email } = await request.json();
         if (!email || !email.includes("@"))
@@ -185,9 +206,9 @@ export default {
         return json({ ok: true, msg: "创建成功", key: secret }, baseHeaders);
       }
 
-      return json({ ok: false, msg: "Not Found" }, { status: 404, ...baseHeaders });
+      return json({ ok: false, msg: "Not Found" }, baseHeaders);
     } catch (e) {
-      return json({ ok: false, msg: e.message || String(e) }, baseHeaders);
+      return json({ ok: false, msg: e.message || String(e) }, baseHeaders, 500);
     }
   },
 };
